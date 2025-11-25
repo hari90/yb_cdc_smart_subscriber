@@ -56,21 +56,6 @@ java -jar target/yb-cdc-smart-subscriber-0.1.0.jar \
   --user-name=user \
   --password=password
 ```
-
-### Env Variables
-
-Set the following environment variables (examples shown):
-
-- `SOURCE_JDBC_URL`: `jdbc:postgresql://SOURCE_HOST:5433/yugabyte?replication=database&preferQueryMode=simple`
-- `SOURCE_ORIGIN_NAME`: Origin name of the source cluster (default empty)
-- `SINK_JDBC_URL`: `jdbc:postgresql://SINK_HOST:5433/yugabyte`
-- `SINK_ORIGIN_NAME`: Origin name of the sink cluster (default `yb_sink`)
-- `REPLICATION_SLOT`: Replication slot name (default `yb_cdc_slot`)
-- `USER_NAME`: `yugabyte`
-- `PASSWORD`: `yugabyte`
-- `STREAM_STATUS_INTERVAL_MS`: Default `5000`
-- `STREAM_POLL_INTERVAL_MS`: Default `200`
-
 ### Notes
 - Requires primary keys or replica identity for correct updates/deletes (wal2json uses `oldkeys`, `pk`).
 - YugabyteDB support for logical decoding / replication origin functions may vary by version; ensure they are available in your deployment.
