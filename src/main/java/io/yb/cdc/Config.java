@@ -23,7 +23,7 @@ public class Config {
           "Usage: java -jar cdc-smart-subscriber-0.1.0-shaded.jar --source-uri=<sourceUri> "
           + "--source-origin-name=<sourceOriginName> --sink-uri=<sinkUri> "
           + "--sink-origin-name=<sinkOriginName> --source-replication-slot=<replicationSlot> "
-          + "--user-name=<userName> --password=<password> [verbose] [startlsn=<startlsn>]");
+          + "--user-name=<userName> --password=<password> [--verbose] [--startlsn=<startlsn>]");
     }
     for (String arg : args) {
       if (arg.startsWith("--source-uri=")) {

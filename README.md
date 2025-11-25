@@ -41,21 +41,20 @@ The app:
 ### Run
 
 ```bash
-java -jar target/cdc-smart-subscriber-0.1.0-shaded.jar
+java -jar target/cdc-smart-subscriber-0.1.0-shaded.jar --source-uri=<sourceUri> --source-origin-name=<sourceOriginName> --sink-uri=<sinkUri> --sink-origin-name=<sinkOriginName> --source-replication-slot=<replicationSlot> --user-name=<userName> --password=<password> [--verbose] [--startlsn=<startlsn>]
 ```
 
-You must pass the source URI, sink URI, and sink origin name via CLI (overrides env):
+You must pass the source URI, sink URI, and sink origin name via CLI
 
-- Positional (in order): <sourceJdbcUrl> <sourceOriginName> <sinkJdbcUrl> <sinkOriginName> <replicationSlot> <userName> <password> [verbose]
 ```bash
 java -jar target/yb-cdc-smart-subscriber-0.1.0.jar \
-  "jdbc:postgresql://cluster_a_url:5433/db1" \
-  "cluster_a" \
-  "jdbc:postgresql://cluster_b_url:5433/db1" \
-  "cluster_b" \
-  "slot_db1_cluster_a_cluster_b" \
-  "user" \
-  "password"
+  --source-uri=jdbc:postgresql://cluster_a_url:5433/db1 \
+  --source-origin-name=cluster_a \
+  --sink-uri=jdbc:postgresql://cluster_b_url:5433/db1 \
+  --sink-origin-name=cluster_b \
+  --source-replication-slot=slot_db1_cluster_a_cluster_b \
+  --user-name=user \
+  --password=password
 ```
 
 ### Env Variables
