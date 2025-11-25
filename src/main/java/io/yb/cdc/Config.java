@@ -34,8 +34,8 @@ public class Config {
         c.sinkJdbcUrl = arg.substring("--sink-uri=".length());
       } else if (arg.startsWith("--sink-origin-name=")) {
         c.sinkOriginName = arg.substring("--sink-origin-name=".length());
-      } else if (arg.startsWith("--replication-slot=")) {
-        c.replicationSlot = arg.substring("--replication-slot=".length());
+      } else if (arg.startsWith("--source-replication-slot=")) {
+        c.replicationSlot = arg.substring("--source-replication-slot=".length());
       } else if (arg.startsWith("--user-name=")) {
         c.userName = arg.substring("--user-name=".length());
       } else if (arg.startsWith("--password=")) {
