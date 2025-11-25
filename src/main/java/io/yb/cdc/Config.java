@@ -10,9 +10,9 @@ public class Config {
   private String replicationSlot = null;
   private String sourceOriginName = null;
   private String sinkOriginName = null;
-  private Duration streamStatusInterval = null;
-  private Duration streamPollInterval = null;
-  private Duration streamErrorInterval = null;
+  final private Duration streamStatusInterval = Duration.ofMillis(5000);
+  final private Duration streamPollInterval = Duration.ofMillis(250);
+  final private Duration streamErrorInterval = Duration.ofMillis(5000);
   private boolean verbose = false;
   private String startLsn = null;
 
