@@ -184,11 +184,8 @@ public class SourceStreamer {
     if (originId == null || originId.isEmpty()) {
       return config.getSourceOriginName();
     }
-    String mappedOriginName = sourceOriginIdToName.get(originId);
-    if (mappedOriginName == null)
-      throw new RuntimeException(
-          "Origin ID " + originId + " not found in source replication origins");
-    return mappedOriginName;
+    // If origin is unknown, use the source origin name
+    return sourceOriginIdToName.getOrDefault(originId, config.getSourceOriginName());
   }
 
   private String getOriginId(JsonNode root) {
