@@ -9,9 +9,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -22,7 +20,7 @@ public class SinkApplier implements AutoCloseable {
 
   private final Config config;
   private Connection sinkConn;
-  private Map<String, String> sinkOriginNameToId = new HashMap<>();
+  private String SourceOriginId;
 
   public SinkApplier(Config config) {
     this.config = config;
@@ -33,38 +31,38 @@ public class SinkApplier implements AutoCloseable {
       sinkConn = DriverManager.getConnection(
           config.getSinkJdbcUrl(), config.getUserName(), config.getPassword());
       sinkConn.setAutoCommit(true);
-      sinkOriginNameToId = Util.loadOriginMap(sinkConn, /*idToName=*/false);
+      SourceOriginId = getSourceOriginId();
     }
     return sinkConn;
   }
 
-  public void applyTransaction(JsonNode root, String originName, boolean injectOriginId)
-      throws Exception {
-    if (originName == null || originName.isEmpty())
-      throw new RuntimeException("Origin name is required");
-
-    if (originName.equals(config.getSinkOriginName())) {
-      if (config.isVerbose()) {
-        log.info("Skipping transaction due to loop back to sink");
-      }
-      return;
+  private String getSourceOriginId() throws SQLException {
+    PreparedStatement ps = getSinkConn().prepareStatement("SELECT roident::text AS roident FROM "
+        + "pg_catalog.pg_replication_origin WHERE roname = ?");
+    ps.setString(1, config.getSourceOriginName());
+    ResultSet rs = ps.executeQuery();
+    if (!rs.next()) {
+      throw new SQLException("Source origin name " + config.getSourceOriginName()
+          + " not found in replication origins");
     }
+    return rs.getString("roident");
+  }
+
+  public void applyTransaction(JsonNode root) throws Exception {
     JsonNode changes = root.get("change");
     if (changes == null || !changes.isArray() || changes.isEmpty()) {
       return;
     }
-    if (config.isVerbose()) {
-      log.info("Applying: {} for origin: {}", root.toString(), originName);
-    }
 
     try (Connection c = getSinkConn()) {
       c.setAutoCommit(false);
-      setupOriginSession(c, originName);
-      if (injectOriginId) {
-        injectOriginId(c, originName);
-      }
+      setupOriginSession(c);
 
       for (JsonNode ch : changes) {
+        // Ignore the origin_id from the original source.
+        if (Util.isYbOriginInsert(ch)) {
+          continue;
+        }
         applyChange(c, ch);
       }
       c.commit();
@@ -86,15 +84,10 @@ public class SinkApplier implements AutoCloseable {
     }
   }
 
-  private void injectOriginId(Connection c, String originName) throws SQLException {
-    String originId = sinkOriginNameToId.get(originName);
-    if (originId == null) {
-      throw new RuntimeException(
-          "Origin Name " + originName + " not found in sink replication origins");
-    }
+  private void injectOriginId(Connection c) throws SQLException {
     try (
         PreparedStatement ps = c.prepareStatement("INSERT INTO yb_origin (origin_id) VALUES (?)")) {
-      ps.setString(1, originId);
+      ps.setString(1, SourceOriginId);
       ps.executeUpdate();
     }
   }
@@ -233,15 +226,14 @@ public class SinkApplier implements AutoCloseable {
     return "\"" + ident.replace("\"", "\"\"") + "\"";
   }
 
-  private void setupOriginSession(Connection c, String originName) throws SQLException {
-    if (originName == null || originName.isEmpty())
-      throw new SQLException("Origin name is required");
+  private void setupOriginSession(Connection c) throws SQLException {
+    injectOriginId(c);
 
     resetOriginSession(c);
 
     try (PreparedStatement ps =
              c.prepareStatement("SELECT pg_replication_origin_session_setup(?)")) {
-      ps.setString(1, originName);
+      ps.setString(1, config.getSourceOriginName());
       ps.execute();
     }
   }

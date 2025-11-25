@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 import org.postgresql.PGConnection;
 import org.postgresql.replication.LogSequenceNumber;
 import org.postgresql.replication.PGReplicationStream;
+import org.postgresql.replication.fluent.logical.ChainedLogicalStreamBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,17 +57,38 @@ public class SourceStreamer {
     return DriverManager.getConnection(config.getSourceJdbcUrl(), props);
   }
 
+  public Map<String, String> loadOriginMap() {
+    try (PreparedStatement ps = sourceConn.prepareStatement(
+             "SELECT roident::text AS roident, roname FROM pg_catalog.pg_replication_origin");
+        ResultSet rs = ps.executeQuery()) {
+      Map<String, String> map = new HashMap<>();
+
+      while (rs.next()) {
+        map.put(rs.getString("roident"), rs.getString("roname"));
+      }
+      log.info("Loaded {} replication origins from source", map.size());
+      return map;
+    } catch (SQLException e) {
+      throw new RuntimeException("Failed to load replication origins", e);
+    }
+  }
+
   public void run() throws Exception {
     this.runnerThread = Thread.currentThread();
     sourceConn = openReplicationConnection();
     log.info("Source connection opened");
     PGConnection pgConn = sourceConn.unwrap(PGConnection.class);
-    sourceOriginIdToName = Util.loadOriginMap(sourceConn, /*idToName=*/true);
+    sourceOriginIdToName = loadOriginMap();
 
-    stream = pgConn.getReplicationAPI()
-                 .replicationStream()
-                 .logical()
-                 .withSlotName(config.getReplicationSlot())
+    ChainedLogicalStreamBuilder streamBuilder =
+        pgConn.getReplicationAPI().replicationStream().logical();
+
+    if (config.getStartLsn() != null) {
+      log.info("Starting from LSN: {}", config.getStartLsn());
+      streamBuilder.withStartPosition(LogSequenceNumber.valueOf(config.getStartLsn()));
+    }
+
+    stream = streamBuilder.withSlotName(config.getReplicationSlot())
                  .withSlotOption("include-pk", 1)
                  .withSlotOption("include-origin", 1)
                  .withSlotOption("include-lsn", 1)
@@ -90,20 +112,21 @@ public class SourceStreamer {
           msgString = msgString.replaceAll(",}", "}");
           log.info("Received message: {}", msgString);
           JsonNode root = mapper.readTree(msgString);
-          String originId = getOriginId(root);
-          boolean injectOriginId = false;
-          if (originId == null) {
-            injectOriginId = true;
-          }
-          String originName = getOriginName(originId);
+          String originName = getOriginName(root);
 
-          while (running && !Thread.currentThread().isInterrupted()) {
-            try {
-              sinkApplier.applyTransaction(root, originName, injectOriginId);
-              break;
-            } catch (Exception e) {
-              log.error("Error applying transaction", e);
-              TimeUnit.MILLISECONDS.sleep(config.getStreamErrorInterval().toMillis());
+          if (originName.equals(config.getSinkOriginName())) {
+            if (config.isVerbose()) {
+              log.info("Skipping transaction due to loop back to sink");
+            }
+          } else {
+            while (running && !Thread.currentThread().isInterrupted()) {
+              try {
+                sinkApplier.applyTransaction(root);
+                break;
+              } catch (Exception e) {
+                log.error("Error applying transaction", e);
+                TimeUnit.MILLISECONDS.sleep(config.getStreamErrorInterval().toMillis());
+              }
             }
           }
 
@@ -140,15 +163,32 @@ public class SourceStreamer {
     }
   }
 
-  private String getOriginName(String originId) {
-    if (originId != null) {
-      String mappedOriginName = sourceOriginIdToName.get(originId);
-      if (mappedOriginName == null)
-        throw new RuntimeException(
-            "Origin ID " + originId + " not found in source replication origins");
-      return mappedOriginName;
+  // Replace once yb adds support for origin_id in wal2json
+  // private String getOriginName(JsonNode root) {
+  //   JsonNode originIdNode = root.get("origin_id");
+  //   String originId =
+  //       (originIdNode != null && !originIdNode.isNull()) ? originIdNode.asText(null) : null;
+  //   if (originId == null) {
+  //     return config.getSourceOriginName();
+  //   }
+  //   String mappedOriginName = sourceOriginIdToName.get(originId);
+  //   if (mappedOriginName == null)
+  //     throw new RuntimeException(
+  //         "Origin ID " + originId + " not found in source replication origins");
+
+  //   return mappedOriginName;
+  // }
+
+  private String getOriginName(JsonNode root) {
+    String originId = getOriginId(root);
+    if (originId == null || originId.isEmpty()) {
+      return config.getSourceOriginName();
     }
-    return config.getSourceOriginName();
+    String mappedOriginName = sourceOriginIdToName.get(originId);
+    if (mappedOriginName == null)
+      throw new RuntimeException(
+          "Origin ID " + originId + " not found in source replication origins");
+    return mappedOriginName;
   }
 
   private String getOriginId(JsonNode root) {
@@ -156,35 +196,19 @@ public class SourceStreamer {
     if (changeNode == null || !changeNode.isArray() || changeNode.isEmpty()) {
       return config.getSourceOriginName();
     }
-    JsonNode FirstChange = changeNode.get(0);
-    if (FirstChange.get("kind").asText().equals("insert")
-        && FirstChange.get("table").asText().equals("yb_origin")) {
-      JsonNode columnnames = FirstChange.get("columnnames");
-      JsonNode columnvalues = FirstChange.get("columnvalues");
-      for (int i = 0; i < columnnames.size(); i++) {
-        if (columnnames.get(i).asText().equals("origin_id")) {
-          return columnvalues.get(i).asText();
+    for (JsonNode change : changeNode) {
+      if (Util.isYbOriginInsert(change)) {
+        JsonNode columnNames = change.get("columnnames");
+        JsonNode columnValues = change.get("columnvalues");
+        for (int i = 0; i < columnNames.size(); i++) {
+          if (columnNames.get(i).asText().equals("origin_id")) {
+            return columnValues.get(i).asText();
+          }
         }
       }
     }
     return null;
   }
-
-  // Replace once yb adds support for origin_id in wal2json
-  //   private String getOriginName(JsonNode root) {
-  //     JsonNode originIdNode = root.get("origin_id");
-  //     String originId =
-  //         (originIdNode != null && !originIdNode.isNull()) ? originIdNode.asText(null) : null;
-  //     if (originId != null) {
-  //       String mappedOriginName = sourceOriginIdToName.get(originId);
-  //       if (mappedOriginName == null)
-  //         throw new RuntimeException(
-  //             "Origin ID " + originId + " not found in source replication origins");
-
-  //       return mappedOriginName;
-  //     }
-  //     return config.getSourceOriginName();
-  //   }
 
   private void sendStatusIfDue() throws SQLException {
     long now = System.nanoTime();
